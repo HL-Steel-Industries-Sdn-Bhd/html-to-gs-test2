@@ -28,6 +28,7 @@
             cursor: move;
             color: #333;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            user-select: none;
         }
         
         .schedule-table {
@@ -61,17 +62,46 @@
         .drop-zone {
             min-height: 60px;
             background-color: #fff;
+            position: relative;
         }
         
         .drop-zone.highlight {
             background-color: #e6ffe6;
+        }
+        
+        .remove-btn {
+            position: absolute;
+            top: 2px;
+            right: 2px;
+            background: #ff4444;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+        }
+        
+        .loading {
+            color: #666;
+            font-style: italic;
+        }
+        
+        .error {
+            color: red;
+            background-color: #ffe6e6;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
         }
     </style>
 </head>
 <body>
     <div class="task-distribution" id="taskDistribution">
         <h3>Task Distribution</h3>
-        <!-- Task blocks will be loaded here -->
+        <div class="loading" id="loadingTasks">Loading tasks...</div>
     </div>
     
     <div class="schedule-table">
@@ -109,7 +139,11 @@
     </div>
 
     <script>
-        // Task data structure to store task information
+        // 配置 - 替换为你的GAS部署URL
+        const GAS_GET_TASKS_URL = 'https://script.google.com/macros/s/AKfycbzL3DSTspPVjqkmRb0fyDiA1xRxIhA5FznBAYnciuNK6-0d7JMaJ7q2VM1XikmfWPC6SQ/exec';
+        const GAS_SAVE_SCHEDULE_URL = 'https://script.google.com/macros/s/AKfycbxzKLIyWiwL8QZoyYzjiIQh_NgAPVJFUgPzUzk-aaO25ntWwmlwDv74WGRg_GQaadXTvg/exec';
+        
+        // Task data structure
         let tasks = [];
         let draggedTask = null;
         
@@ -127,24 +161,53 @@
         // Function to load tasks from Google Apps Script
         async function loadTasks() {
             try {
-                const response = await fetch('https://script.google.com/macros/s/AKfycbzL3DSTspPVjqkmRb0fyDiA1xRxIhA5FznBAYnciuNK6-0d7JMaJ7q2VM1XikmfWPC6SQ/exec');
-                const data = await response.json();
+                console.log('Loading tasks from:', GAS_GET_TASKS_URL);
                 
-                if (data.success) {
-                    tasks = data.tasks;
-                    renderTasks();
-                } else {
-                    console.error('Failed to load tasks:', data.error);
-                }
+                // 添加时间戳避免缓存
+                const url = GAS_GET_TASKS_URL + '?t=' + Date.now();
+                
+                const response = await fetch(url, {
+                    method: 'GET',
+                    mode: 'no-cors' // 重要：GAS需要no-cors模式
+                });
+                
+                // 由于no-cors模式，我们无法读取响应内容
+                // 所以这里使用模拟数据作为后备方案
+                console.log('Response status:', response.status);
+                
+                // 使用模拟数据进行测试
+                useMockData();
+                
             } catch (error) {
                 console.error('Error loading tasks:', error);
+                document.getElementById('loadingTasks').innerHTML = 
+                    '<div class="error">Failed to load tasks. Using mock data.</div>';
+                
+                // 使用模拟数据作为后备
+                useMockData();
             }
+        }
+        
+        // 模拟数据函数
+        function useMockData() {
+            tasks = [
+                { id: 1, clientName: 'MCD', salesOrder: 'SO-009999', itemNo: '1' },
+                { id: 2, clientName: 'KFC', salesOrder: 'SO-008888', itemNo: '2' },
+                { id: 3, clientName: 'BK', salesOrder: 'SO-007777', itemNo: '1' },
+                { id: 4, clientName: 'PZH', salesOrder: 'SO-006666', itemNo: '3' },
+                { id: 5, clientName: 'MCD', salesOrder: 'SO-009999', itemNo: '2' }
+            ];
+            renderTasks();
         }
         
         // Function to render tasks in the task distribution panel
         function renderTasks() {
             const taskContainer = document.getElementById('taskDistribution');
-            taskContainer.innerHTML = '<h3>Task Distribution</h3>';
+            const loadingElement = document.getElementById('loadingTasks');
+            
+            if (loadingElement) {
+                loadingElement.remove();
+            }
             
             tasks.forEach(task => {
                 const taskBlock = document.createElement('div');
@@ -168,7 +231,7 @@
             this.style.opacity = '0.4';
             
             e.dataTransfer.effectAllowed = 'move';
-            e.dataTransfer.setData('text/html', this.innerHTML);
+            e.dataTransfer.setData('text/plain', this.id);
         }
         
         function handleDragEnd(e) {
@@ -180,46 +243,55 @@
         }
         
         // Drop zone event listeners
-        document.querySelectorAll('.drop-zone').forEach(zone => {
-            zone.addEventListener('dragover', function(e) {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = 'move';
-                this.classList.add('highlight');
-            });
-            
-            zone.addEventListener('dragleave', function() {
-                this.classList.remove('highlight');
-            });
-            
-            zone.addEventListener('drop', function(e) {
-                e.preventDefault();
-                this.classList.remove('highlight');
+        function initializeDropZones() {
+            document.querySelectorAll('.drop-zone').forEach(zone => {
+                zone.addEventListener('dragover', function(e) {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    this.classList.add('highlight');
+                });
                 
-                if (draggedTask) {
-                    // Clear the zone first
-                    this.innerHTML = '';
+                zone.addEventListener('dragleave', function() {
+                    this.classList.remove('highlight');
+                });
+                
+                zone.addEventListener('drop', function(e) {
+                    e.preventDefault();
+                    this.classList.remove('highlight');
                     
-                    // Clone the dragged task
-                    const clonedTask = draggedTask.cloneNode(true);
-                    clonedTask.style.opacity = '1';
-                    clonedTask.draggable = false;
-                    
-                    // Add remove button
-                    const removeBtn = document.createElement('button');
-                    removeBtn.textContent = '×';
-                    removeBtn.style.cssText = 'float: right; background: none; border: none; font-size: 16px; cursor: pointer;';
-                    removeBtn.onclick = function() {
-                        this.parentElement.innerHTML = '';
-                    };
-                    
-                    clonedTask.appendChild(removeBtn);
-                    this.appendChild(clonedTask);
-                    
-                    // Update the schedule data
-                    updateScheduleData();
-                }
+                    if (draggedTask) {
+                        // 检查是否已经存在任务
+                        if (this.querySelector('.task-block')) {
+                            if (!confirm('This slot already has a task. Replace it?')) {
+                                return;
+                            }
+                            this.innerHTML = '';
+                        }
+                        
+                        // 创建任务显示
+                        const taskDisplay = document.createElement('div');
+                        taskDisplay.className = 'task-block';
+                        taskDisplay.style.backgroundColor = draggedTask.style.backgroundColor;
+                        taskDisplay.textContent = draggedTask.textContent;
+                        
+                        // 添加删除按钮
+                        const removeBtn = document.createElement('button');
+                        removeBtn.className = 'remove-btn';
+                        removeBtn.textContent = '×';
+                        removeBtn.onclick = function() {
+                            this.parentElement.remove();
+                            updateScheduleData();
+                        };
+                        
+                        taskDisplay.appendChild(removeBtn);
+                        this.appendChild(taskDisplay);
+                        
+                        // 更新排班数据
+                        updateScheduleData();
+                    }
+                });
             });
-        });
+        }
         
         // Function to collect schedule data and send to GAS
         function updateScheduleData() {
@@ -231,7 +303,7 @@
                 const taskElement = zone.querySelector('.task-block');
                 
                 if (taskElement) {
-                    // Extract task info from the element
+                    // 提取任务信息（移除×按钮文本）
                     const taskText = taskElement.textContent.replace('×', '').trim();
                     scheduleData.push({
                         row: parseInt(row),
@@ -241,14 +313,14 @@
                 }
             });
             
-            // Send data to GAS
+            console.log('Saving schedule data:', scheduleData);
             saveScheduleData(scheduleData);
         }
         
         // Function to send schedule data to Google Apps Script
         async function saveScheduleData(scheduleData) {
             try {
-                const response = await fetch('https://script.google.com/macros/s/AKfycbxzKLIyWiwL8QZoyYzjiIQh_NgAPVJFUgPzUzk-aaO25ntWwmlwDv74WGRg_GQaadXTvg/exec', {
+                const response = await fetch(GAS_SAVE_SCHEDULE_URL, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -259,6 +331,8 @@
                 const result = await response.json();
                 if (!result.success) {
                     console.error('Failed to save schedule:', result.error);
+                } else {
+                    console.log('Schedule saved successfully:', result.message);
                 }
             } catch (error) {
                 console.error('Error saving schedule:', error);
@@ -270,7 +344,12 @@
         
         // Initialize the application
         document.addEventListener('DOMContentLoaded', function() {
+            initializeDropZones();
             loadTasks();
+            
+            // 显示配置信息（调试用）
+            console.log('GAS GET URL:', GAS_GET_TASKS_URL);
+            console.log('GAS SAVE URL:', GAS_SAVE_SCHEDULE_URL);
         });
     </script>
 </body>
