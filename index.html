@@ -96,16 +96,25 @@
             border-radius: 5px;
             margin: 10px 0;
         }
+        
+        .success {
+            color: green;
+            background-color: #e6ffe6;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
     </style>
 </head>
 <body>
     <div class="task-distribution" id="taskDistribution">
         <h3>Task Distribution</h3>
-        <div class="loading" id="loadingTasks">Loading tasks...</div>
+        <div class="loading" id="loadingTasks">Loading tasks from Google Sheets...</div>
     </div>
     
     <div class="schedule-table">
         <h3>Schedule</h3>
+        <div id="statusMessage"></div>
         <table id="scheduleTable">
             <thead>
                 <tr>
@@ -140,20 +149,18 @@
 
     <script>
         // 配置 - 替换为你的GAS部署URL
-        const GAS_GET_TASKS_URL = 'https://script.google.com/macros/s/AKfycbzL3DSTspPVjqkmRb0fyDiA1xRxIhA5FznBAYnciuNK6-0d7JMaJ7q2VM1XikmfWPC6SQ/exec';
-        const GAS_SAVE_SCHEDULE_URL = 'https://script.google.com/macros/s/AKfycbxzKLIyWiwL8QZoyYzjiIQh_NgAPVJFUgPzUzk-aaO25ntWwmlwDv74WGRg_GQaadXTvg/exec';
+        const GAS_GET_TASKS_URL = 'https://script.google.com/macros/s/YOUR_GET_TASKS_SCRIPT_ID/exec';
+        const GAS_SAVE_SCHEDULE_URL = 'https://script.google.com/macros/s/YOUR_SAVE_SCHEDULE_SCRIPT_ID/exec';
         
-        // Task data structure
         let tasks = [];
         let draggedTask = null;
         
-        // Function to generate pastel colors based on sales order
+        // Function to generate pastel colors
         function getPastelColor(str) {
             let hash = 0;
             for (let i = 0; i < str.length; i++) {
                 hash = str.charCodeAt(i) + ((hash << 5) - hash);
             }
-            
             const hue = hash % 360;
             return `hsl(${hue}, 70%, 80%)`;
         }
@@ -161,52 +168,53 @@
         // Function to load tasks from Google Apps Script
         async function loadTasks() {
             try {
-                console.log('Loading tasks from:', GAS_GET_TASKS_URL);
+                showStatus('Loading tasks from Google Sheets...', 'loading');
                 
-                // 添加时间戳避免缓存
                 const url = GAS_GET_TASKS_URL + '?t=' + Date.now();
+                console.log('Fetching from:', url);
                 
-                const response = await fetch(url, {
-                    method: 'GET',
-                    mode: 'no-cors' // 重要：GAS需要no-cors模式
-                });
+                const response = await fetch(url);
                 
-                // 由于no-cors模式，我们无法读取响应内容
-                // 所以这里使用模拟数据作为后备方案
-                console.log('Response status:', response.status);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
                 
-                // 使用模拟数据进行测试
-                useMockData();
+                const data = await response.json();
+                console.log('Received data:', data);
+                
+                if (data.success) {
+                    tasks = data.tasks;
+                    renderTasks();
+                    showStatus(`Successfully loaded ${data.count} tasks from Google Sheets`, 'success');
+                } else {
+                    throw new Error(data.error || 'Failed to load tasks');
+                }
                 
             } catch (error) {
                 console.error('Error loading tasks:', error);
-                document.getElementById('loadingTasks').innerHTML = 
-                    '<div class="error">Failed to load tasks. Using mock data.</div>';
+                showStatus(`Error: ${error.message}`, 'error');
                 
-                // 使用模拟数据作为后备
-                useMockData();
+                // 后备方案：显示错误但继续运行
+                tasks = [];
+                renderTasks();
             }
         }
         
-        // 模拟数据函数
-        function useMockData() {
-            tasks = [
-                { id: 1, clientName: 'MCD', salesOrder: 'SO-009999', itemNo: '1' },
-                { id: 2, clientName: 'KFC', salesOrder: 'SO-008888', itemNo: '2' },
-                { id: 3, clientName: 'BK', salesOrder: 'SO-007777', itemNo: '1' },
-                { id: 4, clientName: 'PZH', salesOrder: 'SO-006666', itemNo: '3' },
-                { id: 5, clientName: 'MCD', salesOrder: 'SO-009999', itemNo: '2' }
-            ];
-            renderTasks();
-        }
-        
-        // Function to render tasks in the task distribution panel
+        // Function to render tasks
         function renderTasks() {
             const taskContainer = document.getElementById('taskDistribution');
             const loadingElement = document.getElementById('loadingTasks');
             
             if (loadingElement) {
                 loadingElement.remove();
+            }
+            
+            // 清空容器
+            taskContainer.innerHTML = '<h3>Task Distribution</h3>';
+            
+            if (tasks.length === 0) {
+                taskContainer.innerHTML += '<div class="error">No tasks found</div>';
+                return;
             }
             
             tasks.forEach(task => {
@@ -217,7 +225,6 @@
                 taskBlock.style.backgroundColor = getPastelColor(task.salesOrder);
                 taskBlock.textContent = `${task.clientName} (${task.salesOrder}-${task.itemNo})`;
                 
-                // Add drag event listeners
                 taskBlock.addEventListener('dragstart', handleDragStart);
                 taskBlock.addEventListener('dragend', handleDragEnd);
                 
@@ -229,20 +236,18 @@
         function handleDragStart(e) {
             draggedTask = this;
             this.style.opacity = '0.4';
-            
             e.dataTransfer.effectAllowed = 'move';
             e.dataTransfer.setData('text/plain', this.id);
         }
         
         function handleDragEnd(e) {
             this.style.opacity = '1';
-            
             document.querySelectorAll('.drop-zone').forEach(zone => {
                 zone.classList.remove('highlight');
             });
         }
         
-        // Drop zone event listeners
+        // Initialize drop zones
         function initializeDropZones() {
             document.querySelectorAll('.drop-zone').forEach(zone => {
                 zone.addEventListener('dragover', function(e) {
@@ -260,21 +265,16 @@
                     this.classList.remove('highlight');
                     
                     if (draggedTask) {
-                        // 检查是否已经存在任务
                         if (this.querySelector('.task-block')) {
-                            if (!confirm('This slot already has a task. Replace it?')) {
-                                return;
-                            }
+                            if (!confirm('Replace existing task?')) return;
                             this.innerHTML = '';
                         }
                         
-                        // 创建任务显示
                         const taskDisplay = document.createElement('div');
                         taskDisplay.className = 'task-block';
                         taskDisplay.style.backgroundColor = draggedTask.style.backgroundColor;
                         taskDisplay.textContent = draggedTask.textContent;
                         
-                        // 添加删除按钮
                         const removeBtn = document.createElement('button');
                         removeBtn.className = 'remove-btn';
                         removeBtn.textContent = '×';
@@ -285,15 +285,13 @@
                         
                         taskDisplay.appendChild(removeBtn);
                         this.appendChild(taskDisplay);
-                        
-                        // 更新排班数据
                         updateScheduleData();
                     }
                 });
             });
         }
         
-        // Function to collect schedule data and send to GAS
+        // Update schedule data
         function updateScheduleData() {
             const scheduleData = [];
             
@@ -303,7 +301,6 @@
                 const taskElement = zone.querySelector('.task-block');
                 
                 if (taskElement) {
-                    // 提取任务信息（移除×按钮文本）
                     const taskText = taskElement.textContent.replace('×', '').trim();
                     scheduleData.push({
                         row: parseInt(row),
@@ -313,11 +310,10 @@
                 }
             });
             
-            console.log('Saving schedule data:', scheduleData);
             saveScheduleData(scheduleData);
         }
         
-        // Function to send schedule data to Google Apps Script
+        // Save schedule data
         async function saveScheduleData(scheduleData) {
             try {
                 const response = await fetch(GAS_SAVE_SCHEDULE_URL, {
@@ -329,27 +325,33 @@
                 });
                 
                 const result = await response.json();
-                if (!result.success) {
-                    console.error('Failed to save schedule:', result.error);
+                if (result.success) {
+                    console.log('Schedule saved:', result.message);
                 } else {
-                    console.log('Schedule saved successfully:', result.message);
+                    console.error('Save failed:', result.error);
                 }
             } catch (error) {
                 console.error('Error saving schedule:', error);
             }
         }
         
-        // Auto-save every 30 seconds
+        // Show status message
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('statusMessage');
+            statusDiv.innerHTML = `<div class="${type}">${message}</div>`;
+            
+            if (type === 'success') {
+                setTimeout(() => statusDiv.innerHTML = '', 3000);
+            }
+        }
+        
+        // Auto-save
         setInterval(updateScheduleData, 30000);
         
-        // Initialize the application
+        // Initialize
         document.addEventListener('DOMContentLoaded', function() {
             initializeDropZones();
             loadTasks();
-            
-            // 显示配置信息（调试用）
-            console.log('GAS GET URL:', GAS_GET_TASKS_URL);
-            console.log('GAS SAVE URL:', GAS_SAVE_SCHEDULE_URL);
         });
     </script>
 </body>
